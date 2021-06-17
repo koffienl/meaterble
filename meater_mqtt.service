@@ -1,0 +1,17 @@
+[Unit]
+Description=Meater Thermometer Monitor
+After=network.target
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=1
+User=pi
+WorkingDirectory=/home/pi/meaterble
+ExecStart=/usr/bin/python3 meater_connect.py B8:1F:5E:00:A6:00
+
+#StandardOutput=syslogConsola               # Output to syslog
+#StandardError=syslogConsola                # Output to syslog
+
+[Install]
+WantedBy=multi-user.target
