@@ -1,12 +1,59 @@
 from bluepy import btle
 import time
+import ConfigParser
+import os,sys
+
+MQTT_SERVER = ""
+MQTT_PORT = ""
+MQTT_USERNAME = ""
+MQTT_PASSWORD = ""
+MQTT_TOPIC = ""
+counter = 10
+
 __all__ = ['MeaterProbe']
+
+def ConfigSectionMap(Config, section):
+    dict1 = {}
+    options = Config.options(section)
+    for option in options:
+        try:
+            dict1[option] = Config.get(section, option)
+            if dict1[option] == -1:
+                print("skip: %s" % option)
+        except:
+            print("exception on %s!" % option)
+            dict1[option] = None
+    return dict1
  
 class MeaterProbe:
    def __init__(self, addr):
+      #self._addr = addr
+      #self.connect()
+      #self.update()
+
+      global MQTT_SERVER
+      global MQTT_PORT
+      global MQTT_USERNAME
+      global MQTT_PASSWORD
+      global MQTT_TOPIC
+
+      pathname = os.path.dirname(sys.argv[0])
+      Config = ConfigParser.ConfigParser()
+      Config.read(os.path.abspath(pathname)+"/meater.ini")
+
+      MQTT_SERVER = ConfigSectionMap(Config, "MQTT")['server']
+      MQTT_PORT = ConfigSectionMap(Config, "MQTT")['port']
+      MQTT_USERNAME = ConfigSectionMap(Config, "MQTT")['username']
+      MQTT_PASSWORD = ConfigSectionMap(Config, "MQTT")['password']
+      MQTT_TOPIC = ConfigSectionMap(Config, "MQTT")['topic']
+
+      #print "mqtt server: "
+      #print MQTT_SERVER
+
       self._addr = addr
       self.connect()
       self.update()
+
        
    @staticmethod
    def bytesToInt(byte0, byte1):
@@ -64,13 +111,47 @@ class MeaterProbe:
       return bytearray(self._dev.readCharacteristic(c))
 
    def update(self):
-      tempBytes = self.readCharacteristic(31)
-      batteryBytes = self.readCharacteristic(35)
+      import paho.mqtt.client as mqtt
+      global counter
+      global MQTT_SERVER
+      global MQTT_PORT
+      global MQTT_USERNAME
+      global MQTT_PASSWORD
+      global MQTT_TOPIC
+
+      model = str(self.readCharacteristic(3))
+      if model == 'MEATER':
+         tempBytes = self.readCharacteristic(31)
+         batteryBytes = self.readCharacteristic(35)
+
+      if model == 'MEATER+':
+         tempBytes = self.readCharacteristic(36)
+         batteryBytes = self.readCharacteristic(40)
+
       self._tip = MeaterProbe.bytesToInt(tempBytes[0], tempBytes[1])
       self._ambient = MeaterProbe.convertAmbient(tempBytes)
       self._battery = MeaterProbe.bytesToInt(batteryBytes[0], batteryBytes[1])*10
-      (self._firmware, self._id) = str(self.readCharacteristic(22)).split("_")
       self._lastUpdate = time.time()
 
+      if counter >= 10:
+         print "send mqtt"
+         client = mqtt.Client()
+         client.username_pw_set(MQTT_USERNAME, password=MQTT_PASSWORD)
+         client.connect(MQTT_SERVER, MQTT_PORT)
+         client.loop_start()
+
+         client.publish(MQTT_TOPIC + "/last_updated", self._lastUpdate)
+         client.publish(MQTT_TOPIC + "/mac", self.getAddress())
+         client.publish(MQTT_TOPIC + "/battery", self.getBattery())
+         client.publish(MQTT_TOPIC + "/tip", round(self.getTipC(),0))
+         client.publish(MQTT_TOPIC + "/ambient", round(self.getAmbientC(),0))
+         client.publish(MQTT_TOPIC + "/model", model)
+
+         counter = 0
+
+      counter = counter + 1
+
    def __str__(self):
-       return "%s %s probe: %s tip: %fF/%fC ambient: %fF/%fC battery: %d%% age: %ds" % (self.getAddress(), self.getFirmware(), self.getID(), self.getTipF(), self.getTipC(), self.getAmbientF(), self.getAmbientC(), self.getBattery(), time.time() - self._lastUpdate)
+       #return "%s %s probe: %s tip: %fF/%fC ambient: %fF/%fC battery: %d%% age: %ds" % (self.getAddress(), self.getFirmware(), self.getID(), self.getTipF(), self.getTipC(), self.getAmbientF(), self.getAmbientC(), self.getBattery(), time.time() - self._lastUpdate)
+       return "%s probe: tip: %fF/%fC ambient: %fF/%fC battery: %d%% age: %ds" % (self.getAddress(), self.getTipF(), self.getTipC(), self.getAmbientF(), self.getAmbientC(), self.getBattery(), time.time() - self._lastUpdate)
+
